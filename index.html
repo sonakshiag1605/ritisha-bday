@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Birthday Surprise 🎉</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: 'Poppins', sans-serif;
+  background: linear-gradient(135deg, #ffdde1, #ee9ca7);
+  overflow: hidden;
+}
+
+.slide {
+  display: none;
+  height: 100vh;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+}
+
+.active {
+  display: flex;
+}
+
+.box {
+  background: rgba(255,255,255,0.2);
+  backdrop-filter: blur(10px);
+  padding: 30px;
+  border-radius: 20px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+}
+
+button {
+  margin-top: 20px;
+  padding: 12px 25px;
+  border: none;
+  border-radius: 30px;
+  background: #ff6f91;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+button:hover {
+  background: #ff3e6c;
+}
+
+.hidden {
+  display: none;
+}
+
+img, video {
+  max-width: 80%;
+  border-radius: 15px;
+  margin-top: 20px;
+}
+</style>
+</head>
+
+<body>
+
+<!-- 🎵 MUSIC -->
+<audio id="bgMusic" loop>
+  <source src="music.mp3" type="audio/mp3">
+</audio>
+
+<!-- SLIDE 1 -->
+<div class="slide active" id="slide1">
+  <div class="box">
+    <h2>Something special is coming...</h2>
+    <h1 id="countdown">10</h1>
+  </div>
+
+  <div class="box hidden" id="startBox">
+    <h2>Let’s Celebrate 🎉</h2>
+    <button onclick="startExperience()">Enter</button>
+  </div>
+</div>
+
+<!-- SLIDE 2 -->
+<div class="slide" id="slide2">
+  <div class="box" id="q1">
+    <h2>Are you excited? 😄</h2>
+    <button onclick="showNextQ()">Yes</button>
+    <button onclick="showNextQ()">No</button>
+  </div>
+
+  <div class="box hidden" id="q2">
+    <h2>Are you ready for the surprise? 🎁</h2>
+    <button onclick="nextSlide(3)">Yes</button>
+  </div>
+</div>
+
+<!-- SLIDE 3 -->
+<div class="slide" id="slide3">
+  <div class="box">
+    <h2>Special Moment 💖</h2>
+    <video controls>
+      <source src="video1.mp4" type="video/mp4">
+    </video>
+    <button onclick="nextSlide(4)">Next</button>
+  </div>
+</div>
+
+<!-- SLIDE 4 -->
+<div class="slide" id="slide4">
+  <div class="box">
+    <h2>You are amazing 💕</h2>
+    <img src="image1.jpg" alt="Her Image">
+    <button onclick="nextSlide(5)">Next</button>
+  </div>
+</div>
+
+<!-- SLIDE 5 -->
+<div class="slide" id="slide5">
+  <div class="box">
+    <h2>Our Memories ❤️</h2>
+    <video controls>
+      <source src="video2.mp4" type="video/mp4">
+    </video>
+    <button onclick="nextSlide(6)">Next</button>
+  </div>
+</div>
+
+<!-- SLIDE 6 -->
+<div class="slide" id="slide6">
+  <div class="box">
+    <h1>Thank You For Watching 💖</h1>
+    <h2>Enjoy Your Day 🎂</h2>
+  </div>
+</div>
+
+<script>
+// COUNTDOWN
+let time = 10;
+let countdownEl = document.getElementById("countdown");
+let startBox = document.getElementById("startBox");
+
+let timer = setInterval(() => {
+  time--;
+  countdownEl.innerText = time;
+
+  if (time <= 0) {
+    clearInterval(timer);
+    countdownEl.innerText = "🎉";
+    startBox.classList.remove("hidden");
+  }
+}, 1000);
+
+// START EXPERIENCE
+function startExperience() {
+  document.getElementById("bgMusic").play();
+  nextSlide(2);
+}
+
+// SLIDE NAVIGATION
+function nextSlide(num) {
+  document.querySelectorAll(".slide").forEach(s => s.classList.remove("active"));
+  document.getElementById("slide" + num).classList.add("active");
+}
+
+// QUESTIONS FLOW
+function showNextQ() {
+  document.getElementById("q1").classList.add("hidden");
+  document.getElementById("q2").classList.remove("hidden");
+}
+</script>
+
+</body>
+</html>
