@@ -1,0 +1,662 @@
+import os
+import zipfile
+from pathlib import Path
+
+PROJECT_DIR = Path("cv-orbit-fullstack")
+ZIP_FILENAME = "cv-orbit-fullstack.zip"
+
+# Complete project files dictionary
+FILES = {
+    "README.md": """# CV Orbit — AI-Powered Resume Screening & Job Matching System
+
+**Tagline:** Smarter hiring. Faster careers.
+
+## Quick Start
+
+### 1. Run Frontend (React + Vite + Tailwind CSS)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 2. Run Backend (Python FastAPI)
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\\Scripts\\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+### 3. Run via Docker Compose
+```bash
+docker-compose up --build
+```
+
+## Demo Login Credentials
+- **HR / Recruiter Portal:** `hr.lead@cvorbit.ai` / `Enterprise@2026`
+- **Job Seeker Portal:** `alex.rivera@example.com` / `Enterprise@2026`
+""",
+
+    ".gitignore": """.env
+.env.local
+node_modules/
+dist/
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+cv-orbit-fullstack.zip
+""",
+
+    "docker-compose.yml": """version: '3.9'
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env.example
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api/v1
+    depends_on:
+      - backend
+""",
+
+    "backend/.env.example": """DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cvorbit
+REDIS_URL=redis://localhost:6379/0
+JWT_SECRET=change-this-super-secret-jwt-key
+JWT_REFRESH_SECRET=change-this-refresh-secret-key
+OPENAI_API_KEY=your-openai-api-key
+YOUTUBE_API_KEY=your-youtube-data-api-v3-key
+""",
+
+    "backend/requirements.txt": """fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+python-multipart==0.0.12
+pypdf==5.0.1
+python-docx==1.1.2
+passlib[bcrypt]==1.7.4
+PyJWT==2.9.0
+""",
+
+    "backend/Dockerfile": """FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+""",
+
+    "backend/main.py": """from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional, Dict
+import io
+import re
+from pypdf import PdfReader
+
+app = FastAPI(
+    title="CV Orbit AI API",
+    description="AI-Powered Resume Screening, Practice Assessments & Career Copilot REST API",
+    version="1.2.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SKILL_SYNONYMS = {
+    "js": "JavaScript",
+    "javascript": "JavaScript",
+    "ts": "TypeScript",
+    "typescript": "TypeScript",
+    "py": "Python",
+    "python": "Python",
+    "react": "React",
+    "nextjs": "Next.js",
+    "nodejs": "Node.js",
+    "fastapi": "FastAPI",
+    "postgresql": "PostgreSQL",
+    "sql": "SQL",
+    "docker": "Docker",
+    "kubernetes": "Kubernetes",
+    "aws": "AWS",
+    "redis": "Redis",
+    "llm": "LLM Engineering",
+    "pytorch": "PyTorch",
+    "nlp": "NLP",
+    "machine learning": "Machine Learning",
+    "rest api": "REST APIs",
+    "system design": "System Design",
+}
+
+JOBS_DB = [
+    {
+        "id": "job-7",
+        "company": "Amazon",
+        "title": "Software Development Engineer II (AWS & Distributed Systems)",
+        "location": "Seattle, WA / Bengaluru (Hybrid)",
+        "salary": "$185,000 - $225,000",
+        "requiredSkills": ["Python", "AWS", "Docker", "Kubernetes", "System Design", "REST APIs"],
+        "minExperience": 3,
+    },
+    {
+        "id": "job-8",
+        "company": "Gemini Solutions",
+        "title": "Full-Stack Enterprise & Cloud Consultant",
+        "location": "Gurugram / Noida / Remote",
+        "salary": "$145,000 - $175,000",
+        "requiredSkills": ["React", "TypeScript", "Node.js", "Python", "PostgreSQL", "REST APIs"],
+        "minExperience": 2,
+    },
+    {
+        "id": "job-9",
+        "company": "Microsoft",
+        "title": "Senior AI & Cloud Platform Engineer (Azure Copilot)",
+        "location": "Redmond, WA / Hyderabad (Hybrid)",
+        "salary": "$190,000 - $230,000",
+        "requiredSkills": ["TypeScript", "React", "Python", "LLM Engineering", "Docker", "Kubernetes"],
+        "minExperience": 4,
+    },
+]
+
+
+class MatchRequest(BaseModel):
+    skills: List[str]
+    experience_years: int = 3
+
+
+class ChatRequest(BaseModel):
+    message: str
+    skills: List[str] = []
+    experience_years: int = 3
+
+
+class AssessmentSubmitRequest(BaseModel):
+    assessment_id: str
+    answers: Dict[int, int]
+
+
+ASSESSMENTS_DB = {
+    "test-docker": {"skill": "Docker", "answer_key": {0: 0, 1: 0, 2: 0}},
+    "test-aws": {"skill": "AWS", "answer_key": {0: 0, 1: 0, 2: 0}},
+    "test-llm": {"skill": "LLM Engineering", "answer_key": {0: 0, 1: 0, 2: 0}},
+    "test-fullstack": {"skill": "System Design", "answer_key": {0: 0, 1: 0, 2: 0}},
+}
+
+
+def extract_skills_from_text(text: str) -> List[str]:
+    lower = text.lower()
+    found = set()
+    for alias, canonical in SKILL_SYNONYMS.items():
+        pattern = r"(^|[^a-z0-9])" + re.escape(alias) + r"([^a-z0-9]|$)"
+        if re.search(pattern, lower):
+            found.add(canonical)
+    return sorted(found)
+
+
+@app.get("/api/v1/health")
+def health_check():
+    return {"status": "healthy", "service": "CV Orbit AI"}
+
+
+@app.get("/api/v1/jobs")
+def list_jobs():
+    return {"jobs": JOBS_DB}
+
+
+@app.post("/api/v1/resumes/parse")
+async def parse_resume(file: UploadFile = File(...)):
+    content = await file.read()
+    text = ""
+    if file.filename.lower().endswith(".pdf"):
+        reader = PdfReader(io.BytesIO(content))
+        text = "\\n".join(page.extract_text() or "" for page in reader.pages)
+    else:
+        text = content.decode("utf-8", errors="ignore")
+
+    skills = extract_skills_from_text(text)
+    return {
+        "filename": file.filename,
+        "extracted_skills": skills,
+        "word_count": len(text.split()),
+        "preview": text[:1000],
+    }
+
+
+@app.post("/api/v1/matches")
+def match_jobs(payload: MatchRequest):
+    cand_skills = {s.lower() for s in payload.skills}
+    results = []
+    for job in JOBS_DB:
+        req = job["requiredSkills"]
+        matched = [s for s in req if s.lower() in cand_skills]
+        missing = [s for s in req if s.lower() not in cand_skills]
+        skill_pct = round((len(matched) / max(1, len(req))) * 100)
+        exp_pct = 100 if payload.experience_years >= job["minExperience"] else 70
+        overall = round(skill_pct * 0.7 + exp_pct * 0.3)
+        results.append({
+            "job": job,
+            "match_score": overall,
+            "matched_skills": matched,
+            "missing_skills": missing,
+        })
+    results.sort(key=lambda x: x["match_score"], reverse=True)
+    return {"matches": results}
+
+
+@app.post("/api/v1/assessments/submit")
+def submit_assessment(payload: AssessmentSubmitRequest):
+    spec = ASSESSMENTS_DB.get(payload.assessment_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    key = spec["answer_key"]
+    correct = sum(1 for idx, ans in key.items() if payload.answers.get(idx) == ans)
+    score_pct = round((correct / len(key)) * 100)
+    passed = score_pct >= 67
+    return {
+        "assessment_id": payload.assessment_id,
+        "skill_unlocked": spec["skill"] if passed else None,
+        "score_pct": score_pct,
+        "passed": passed,
+    }
+
+
+@app.post("/api/v1/chat")
+def career_copilot_chat(payload: ChatRequest):
+    matches = match_jobs(MatchRequest(skills=payload.skills, experience_years=payload.experience_years))["matches"]
+    top = matches[0] if matches else None
+    missing = sorted({sk for m in matches for sk in m["missing_skills"]})
+    reply = (
+        f"Based on your {len(payload.skills)} verified skills, your top match is "
+        f"{top['job']['company']} ({top['match_score']}%). "
+        f"Closing gaps in {', '.join(missing[:3]) or 'System Design'} will boost your eligibility further."
+    )
+    return {"reply": reply, "top_match": top, "missing_skills": missing}
+""",
+
+    "frontend/.env.example": """VITE_API_URL=http://localhost:8000/api/v1
+VITE_YOUTUBE_API_KEY=your-youtube-data-api-v3-key
+""",
+
+    "frontend/package.json": """{
+  "name": "cv-orbit-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3000",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^0.454.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "vite": "^5.4.10"
+  }
+}
+""",
+
+    "frontend/vite.config.js": """import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+});
+""",
+
+    "frontend/tailwind.config.js": """/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+""",
+
+    "frontend/postcss.config.js": """export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+""",
+
+    "frontend/index.html": """<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CV Orbit — Smarter hiring. Faster careers.</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+""",
+
+    "frontend/src/index.css": """@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+""",
+
+    "frontend/src/main.jsx": """import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App.jsx';
+import './index.css';
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+""",
+
+    "frontend/src/App.jsx": """import React, { useState, useMemo } from 'react';
+import {
+  Sparkles, Briefcase, GraduationCap, UploadCloud, CheckCircle2,
+  AlertTriangle, Play, Award, Send, Search, Building2, FileText
+} from 'lucide-react';
+
+const SKILL_SYNONYMS = {
+  js: 'JavaScript', javascript: 'JavaScript', ts: 'TypeScript', typescript: 'TypeScript',
+  py: 'Python', python: 'Python', react: 'React', nextjs: 'Next.js', nodejs: 'Node.js',
+  fastapi: 'FastAPI', postgresql: 'PostgreSQL', sql: 'SQL', docker: 'Docker',
+  kubernetes: 'Kubernetes', aws: 'AWS', redis: 'Redis', llm: 'LLM Engineering',
+  'system design': 'System Design', 'rest api': 'REST APIs'
+};
+
+const JOBS = [
+  {
+    id: 'job-amazon',
+    company: 'Amazon',
+    title: 'Software Development Engineer II (AWS)',
+    location: 'Seattle / Bengaluru (Hybrid)',
+    salary: '$185,000 - $225,000',
+    requiredSkills: ['Python', 'AWS', 'Docker', 'Kubernetes', 'System Design', 'REST APIs'],
+    minExperience: 3
+  },
+  {
+    id: 'job-gemini',
+    company: 'Gemini Solutions',
+    title: 'Full-Stack Enterprise & Cloud Consultant',
+    location: 'Gurugram / Noida / Remote',
+    salary: '$145,000 - $175,000',
+    requiredSkills: ['React', 'TypeScript', 'Node.js', 'Python', 'PostgreSQL', 'REST APIs'],
+    minExperience: 2
+  },
+  {
+    id: 'job-microsoft',
+    company: 'Microsoft',
+    title: 'Senior AI & Cloud Platform Engineer',
+    location: 'Redmond / Hyderabad (Hybrid)',
+    salary: '$190,000 - $230,000',
+    requiredSkills: ['TypeScript', 'React', 'Python', 'LLM Engineering', 'Docker', 'Kubernetes'],
+    minExperience: 4
+  }
+];
+
+const COURSES = [
+  { skill: 'Docker', title: 'Docker Containers & Microservices', youtubeId: 'fqMOX6JJhGo' },
+  { skill: 'AWS', title: 'AWS Solutions Architect Course', youtubeId: 'Ia-UEYYR44s' },
+  { skill: 'Kubernetes', title: 'Kubernetes Full Course', youtubeId: 'X48VuDVv0do' },
+  { skill: 'LLM Engineering', title: 'Production LLM & RAG Pipelines', youtubeId: 'tcqEUSNCn8I' }
+];
+
+function parseSkills(text) {
+  const lower = (text || '').toLowerCase();
+  const found = new Set();
+  Object.entries(SKILL_SYNONYMS).forEach(([k, v]) => {
+    if (lower.includes(k)) found.add(v);
+  });
+  return found.size ? Array.from(found) : ['Python', 'React', 'TypeScript', 'PostgreSQL', 'REST APIs'];
+}
+
+export default function App() {
+  const [userName, setUserName] = useState('');
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [portal, setPortal] = useState('CANDIDATE');
+  const [skills, setSkills] = useState(['Python', 'React', 'TypeScript', 'PostgreSQL', 'REST APIs']);
+  const [resumeName, setResumeName] = useState('Candidate_Resume_2026.pdf');
+  const [uploadAlert, setUploadAlert] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [messages, setMessages] = useState([
+    { role: 'ai', text: 'Hi! Ask me which companies you are eligible for or what skills to learn next.' }
+  ]);
+
+  const matches = useMemo(() => {
+    return JOBS.map((job) => {
+      const matched = job.requiredSkills.filter((s) => skills.includes(s));
+      const missing = job.requiredSkills.filter((s) => !skills.includes(s));
+      const score = Math.round((matched.length / job.requiredSkills.length) * 100);
+      return { job, matched, missing, score };
+    }).sort((a, b) => b.score - a.score);
+  }, [skills]);
+
+  const allMissing = useMemo(
+    () => Array.from(new Set(matches.flatMap((m) => m.missing))),
+    [matches]
+  );
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text().catch(() => '');
+    const extracted = parseSkills(`${file.name} ${text}`);
+    setSkills(extracted);
+    setResumeName(file.name);
+    setUploadAlert(true);
+  };
+
+  const askCopilot = () => {
+    if (!chatInput.trim()) return;
+    const top = matches[0];
+    const reply = `Your top match is ${top.job.company} (${top.score}% eligible). Missing skills: ${
+      allMissing.join(', ') || 'None'
+    }.`;
+    setMessages((prev) => [...prev, { role: 'user', text: chatInput }, { role: 'ai', text: reply }]);
+    setChatInput('');
+  };
+
+  if (!loggedIn) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setLoggedIn(true);
+          }}
+          className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 space-y-5"
+        >
+          <div className="flex items-center gap-2 text-indigo-400 font-bold text-xl">
+            <Sparkles className="w-6 h-6" />
+            <span>CV Orbit AI</span>
+          </div>
+          <p className="text-xs text-slate-400">Smarter hiring. Faster careers.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setPortal('CANDIDATE')}
+              className={`p-3 rounded-xl border text-xs font-bold ${
+                portal === 'CANDIDATE' ? 'border-teal-500 bg-teal-500/15' : 'border-slate-800'
+              }`}
+            >
+              Job Seeker Portal
+            </button>
+            <button
+              type="button"
+              onClick={() => setPortal('HR')}
+              className={`p-3 rounded-xl border text-xs font-bold ${
+                portal === 'HR' ? 'border-indigo-500 bg-indigo-500/15' : 'border-slate-800'
+              }`}
+            >
+              HR / Recruiter Portal
+            </button>
+          </div>
+          <input
+            type="text"
+            required
+            placeholder="Enter your name (e.g. Astha)"
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm"
+          />
+          <button
+            type="submit"
+            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-bold text-sm"
+          >
+            Enter Dashboard
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-6 sm:p-10">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <span className="text-xs font-bold text-indigo-600 uppercase">CV Orbit • {portal}</span>
+            <h1 className="text-2xl font-extrabold mt-1">Welcome, {userName || 'Astha'} 👋</h1>
+          </div>
+          <label className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer flex items-center gap-2">
+            <UploadCloud className="w-4 h-4" />
+            <span>Upload PDF Resume</span>
+            <input type="file" accept=".pdf,.txt,.docx" onChange={handleFileUpload} className="hidden" />
+          </label>
+        </div>
+
+        {uploadAlert && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              <div className="text-xs">
+                <div className="font-bold text-emerald-900">Resume Saved: {resumeName}</div>
+                <div className="text-emerald-700">Extracted Skills: {skills.join(', ')}</div>
+              </div>
+            </div>
+            <button onClick={() => setUploadAlert(false)} className="text-xs font-bold text-emerald-700">
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {matches.map(({ job, matched, missing, score }) => (
+            <div key={job.id} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-indigo-600">{job.company}</span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-700">
+                  {score}% Eligible
+                </span>
+              </div>
+              <div className="font-bold text-sm">{job.title}</div>
+              <div className="text-xs text-slate-500">{job.location} • {job.salary}</div>
+              <div className="text-[11px] text-emerald-700">Matched: {matched.join(', ')}</div>
+              {missing.length > 0 && (
+                <div className="text-[11px] text-rose-600">Lacking: {missing.join(', ')}</div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-3">
+            <h2 className="font-bold text-base">Learning Hub (Direct YouTube Courses)</h2>
+            {COURSES.map((c) => (
+              <div key={c.skill} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                <div>
+                  <div className="font-bold">{c.title}</div>
+                  <div className="text-slate-500">Unlocks: {c.skill}</div>
+                </div>
+                <a
+                  href={`https://www.youtube.com/watch?v=${c.youtubeId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold flex items-center gap-1"
+                >
+                  <Play className="w-3 h-3" /> Watch on YT
+                </a>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-3">
+            <h2 className="font-bold text-base">CV Orbit AI Career Copilot</h2>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {messages.map((m, i) => (
+                <div
+                  key={i}
+                  className={`p-3 rounded-xl text-xs ${
+                    m.role === 'user' ? 'bg-indigo-600 text-white ml-8' : 'bg-slate-100 text-slate-800 mr-8'
+                  }`}
+                >
+                  {m.text}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && askCopilot()}
+                placeholder="Ask about eligibility or skill gaps..."
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs"
+              />
+              <button onClick={askCopilot} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold">
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+""",
+}
+
+
+def build_zip():
+    for rel_path, content in FILES.items():
+        full_path = PROJECT_DIR / rel_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content, encoding="utf-8")
+
+    with zipfile.ZipFile(ZIP_FILENAME, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in PROJECT_DIR.rglob("*"):
+            if file_path.is_file():
+                zf.write(file_path, file_path.relative_to(PROJECT_DIR.parent))
+
+    print("Created folder: {PROJECT_DIR.resolve()}")
+    print("Created ZIP:    {Path(ZIP_FILENAME).resolve()}")
+
+
+if __name__ == "__main__":
+    build_zip()
